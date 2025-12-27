@@ -80,16 +80,42 @@ class Example:
 
 
 class ColumnMapping:
-    """Maps DataFrame columns to expected fields."""
+    """Maps DataFrame columns to expected fields.
 
-    def __init__(self, mapping: Dict[str, str]):
+    Supports two formats:
+    1. Long format (row per metric): Each row has a 'metric' column
+    2. Wide format (columns per metric): Each metric has its own columns
+       e.g., toxicity_score, toxicity_success, toxicity_reason
+    """
+
+    def __init__(self, mapping: Dict[str, Any]):
         self.mapping = mapping
+        # Detect if this is wide format (has 'metrics' list)
+        self.is_wide_format = 'metrics' in mapping and isinstance(mapping['metrics'], list)
+
+        if self.is_wide_format:
+            self.metrics = mapping['metrics']
+            self.score_suffix = mapping.get('score_suffix', '_score')
+            self.success_suffix = mapping.get('success_suffix', '_success')
+            self.reason_suffix = mapping.get('reason_suffix', '_reason')
+        else:
+            self.metrics = None
 
     def get(self, field: str, default: str = None) -> str:
         return self.mapping.get(field, default or field)
 
     def has(self, field: str) -> bool:
         return field in self.mapping
+
+    def get_metric_columns(self, metric: str) -> Dict[str, str]:
+        """Get column names for a specific metric (wide format only)."""
+        if not self.is_wide_format:
+            raise ValueError("get_metric_columns only works with wide format")
+        return {
+            'score': f'{metric}{self.score_suffix}',
+            'success': f'{metric}{self.success_suffix}',
+            'reason': f'{metric}{self.reason_suffix}',
+        }
 
 
 class EvaluationReportGenerator:
@@ -127,11 +153,16 @@ class EvaluationReportGenerator:
             self.report_metadata.document_id = f"EVAL-{self.generated_at.strftime('%Y%m%d')}-{self.run_id[:8].upper()}"
 
         if metrics is None:
-            metric_col = column_mapping.get('metric')
-            if metric_col in df.columns:
-                self.metrics = df[metric_col].unique().tolist()
+            # Check if using wide format (columns per metric)
+            if column_mapping.is_wide_format:
+                self.metrics = column_mapping.metrics
             else:
-                self.metrics = ['overall']
+                # Long format: metrics are in a column
+                metric_col = column_mapping.get('metric')
+                if metric_col in df.columns:
+                    self.metrics = df[metric_col].unique().tolist()
+                else:
+                    self.metrics = ['overall']
         else:
             self.metrics = metrics
 
@@ -146,6 +177,66 @@ class EvaluationReportGenerator:
         self.metric_results: Dict[str, MetricResult] = {}
         self.examples: Dict[str, List[Example]] = {}
 
+        if self.column_mapping.is_wide_format:
+            self._compute_results_wide_format()
+        else:
+            self._compute_results_long_format()
+
+    def _compute_results_wide_format(self):
+        """Compute results for wide format (columns per metric)."""
+        for metric in self.metrics:
+            metric_cols = self.column_mapping.get_metric_columns(metric)
+            score_col = metric_cols['score']
+            success_col = metric_cols['success']
+
+            if success_col not in self.df.columns:
+                continue
+
+            total = len(self.df)
+            correct = self.df[success_col].sum()
+            accuracy = correct / total if total > 0 else 0
+
+            # For wide format, we use success as the primary metric
+            # Precision/recall/f1 are computed based on success column
+            precision = recall = f1 = accuracy
+
+            # Calculate score statistics
+            score_mean = score_median = score_min = score_max = score_q25 = score_q75 = None
+            if score_col in self.df.columns:
+                scores = self.df[score_col].dropna()
+                if len(scores) > 0:
+                    score_mean = float(scores.mean())
+                    score_median = float(scores.median())
+                    score_min = float(scores.min())
+                    score_max = float(scores.max())
+                    score_q25 = float(scores.quantile(0.25))
+                    score_q75 = float(scores.quantile(0.75))
+
+            error_count = total - correct
+            error_rate = error_count / total if total > 0 else 0
+
+            self.metric_results[metric] = MetricResult(
+                name=metric,
+                display_name=metric.replace('_', ' ').title(),
+                accuracy=accuracy,
+                precision=precision,
+                recall=recall,
+                f1=f1,
+                support=total,
+                error_count=int(error_count),
+                error_rate=error_rate,
+                score_mean=score_mean,
+                score_median=score_median,
+                score_min=score_min,
+                score_max=score_max,
+                score_q25=score_q25,
+                score_q75=score_q75
+            )
+
+            self.examples[metric] = self._extract_examples_wide_format(metric)
+
+    def _compute_results_long_format(self):
+        """Compute results for long format (row per metric)."""
         metric_col = self.column_mapping.get('metric')
 
         for metric in self.metrics:
@@ -255,6 +346,46 @@ class EvaluationReportGenerator:
                 expected=row.get(expected_col, None) if expected_col in df.columns else None,
                 predicted=row.get(predicted_col, None) if predicted_col in df.columns else None,
                 score=float(row.get(score_col, 0)) if score_col in df.columns else 0.0,
+                metric_name=metric_name,
+                is_correct=is_correct,
+                reason=reason
+            )
+            examples.append(example)
+
+        examples.sort(key=lambda x: (x.is_correct, -x.score))
+        return examples
+
+    def _extract_examples_wide_format(self, metric_name: str, max_examples: int = 20) -> List[Example]:
+        """Extract examples for a metric in wide format."""
+        examples = []
+
+        id_col = self.column_mapping.get('id', 'id')
+        input_col = self.column_mapping.get('input', 'input')
+        output_col = self.column_mapping.get('output', 'output')
+
+        metric_cols = self.column_mapping.get_metric_columns(metric_name)
+        score_col = metric_cols['score']
+        success_col = metric_cols['success']
+        reason_col = metric_cols['reason']
+
+        for idx, row in self.df.head(max_examples).iterrows():
+            is_correct = bool(row.get(success_col, False)) if success_col in self.df.columns else False
+
+            # Get reason from metric-specific reason column
+            if reason_col in self.df.columns:
+                reason = str(row.get(reason_col, ''))
+            else:
+                reason = "Pass" if is_correct else "Fail"
+
+            score = float(row.get(score_col, 0)) if score_col in self.df.columns else 0.0
+
+            example = Example(
+                id=str(row.get(id_col, idx)) if id_col in self.df.columns else str(idx),
+                input_text=str(row.get(input_col, '')) if input_col in self.df.columns else '',
+                output_text=str(row.get(output_col, '')) if output_col in self.df.columns else '',
+                expected=None,
+                predicted=None,
+                score=score,
                 metric_name=metric_name,
                 is_correct=is_correct,
                 reason=reason

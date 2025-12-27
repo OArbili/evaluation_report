@@ -21,20 +21,25 @@ from evaluation_report_generator import (
 
 def create_synthetic_dataset(n_samples: int = 500, seed: int = 42) -> pd.DataFrame:
     """
-    Create a synthetic evaluation dataset with multiple metrics.
+    Create a synthetic evaluation dataset with columns per metric (wide format).
+
+    Each row represents a single sample with multiple metric columns:
+    - {metric}_score: The confidence score for the metric
+    - {metric}_success: Whether the evaluation passed (True/False)
+    - {metric}_reason: The reason/explanation for the result
 
     Args:
         n_samples: Number of samples to generate
         seed: Random seed for reproducibility
 
     Returns:
-        DataFrame with synthetic evaluation data
+        DataFrame with synthetic evaluation data in wide format
     """
     np.random.seed(seed)
     random.seed(seed)
 
     # Define metrics to evaluate (flexible - works with any number of metrics)
-    metrics = ['toxicity', 'faithfulness', 'factual_accuracy']  # Example with 3 metrics
+    metrics = ['toxicity', 'faithfulness', 'factual_accuracy']
 
     # Sample prompts and responses (for realistic examples)
     sample_prompts = [
@@ -106,57 +111,100 @@ def create_synthetic_dataset(n_samples: int = 500, seed: int = 42) -> pd.DataFra
         "Crypto is internet money that criminals use.",
     ]
 
+    # Reasons for pass/fail per metric
+    pass_reasons = {
+        'toxicity': [
+            "No toxic content detected in the response",
+            "Response is respectful and appropriate",
+            "Content maintains professional tone throughout",
+        ],
+        'faithfulness': [
+            "Response accurately reflects source information",
+            "No hallucinations or fabricated claims detected",
+            "Information is consistent with provided context",
+        ],
+        'factual_accuracy': [
+            "All stated facts are verifiable and correct",
+            "Response contains accurate scientific information",
+            "Historical and factual claims are accurate",
+        ],
+    }
+
+    fail_reasons = {
+        'toxicity': [
+            "Response contains potentially harmful misinformation",
+            "Dismissive or condescending tone detected",
+            "Content may be misleading to users",
+        ],
+        'faithfulness': [
+            "Response includes unsupported claims",
+            "Information appears to be hallucinated",
+            "Response deviates from factual basis",
+        ],
+        'factual_accuracy': [
+            "Contains factually incorrect statements",
+            "Scientific claims are inaccurate",
+            "Response includes common misconceptions as facts",
+        ],
+    }
+
+    # Metric accuracy rates
+    metric_accuracy = {
+        'toxicity': 0.92,
+        'faithfulness': 0.78,
+        'factual_accuracy': 0.72,
+    }
+
     data = []
-    sample_id = 0
 
-    for metric in metrics:
-        # Number of samples per metric
-        samples_per_metric = n_samples // len(metrics)
+    for i in range(n_samples):
+        # Select prompt and determine overall quality
+        prompt_idx = i % len(sample_prompts)
 
-        for i in range(samples_per_metric):
-            sample_id += 1
+        # Randomly determine if this sample is mostly good or bad
+        is_good_sample = np.random.random() > 0.25
 
-            # Determine if this is a "correct" prediction with varying probabilities per metric
-            metric_accuracy = {
-                'toxicity': 0.92,
-                'faithfulness': 0.78,
-                'stability': 0.85,
-                'factual_accuracy': 0.72,
-                'coherence': 0.88
-            }
+        if is_good_sample:
+            response = sample_responses_good[prompt_idx]
+        else:
+            response = sample_responses_bad[prompt_idx]
 
-            is_correct = np.random.random() < metric_accuracy[metric]
+        row = {
+            'sample_id': f'SAMPLE-{i+1:05d}',
+            'prompt': sample_prompts[prompt_idx],
+            'response': response,
+            'timestamp': datetime.now().isoformat(),
+            'model_version': 'gpt-4-turbo',
+            'evaluation_source': 'automated'
+        }
 
-            # Generate score (higher for correct, lower for incorrect)
-            if is_correct:
+        # Generate metric columns for each metric
+        for metric in metrics:
+            # Determine success based on metric accuracy rate
+            # Good samples have higher success rate, bad samples lower
+            if is_good_sample:
+                is_success = np.random.random() < metric_accuracy[metric]
+            else:
+                is_success = np.random.random() < (1 - metric_accuracy[metric])
+
+            # Generate score based on success
+            if is_success:
                 score = np.random.beta(8, 2)  # Skewed towards 1
             else:
                 score = np.random.beta(2, 5)  # Skewed towards 0
 
-            # Determine expected and predicted values
-            expected = 1 if np.random.random() > 0.3 else 0
-            predicted = expected if is_correct else (1 - expected)
-
-            # Select prompt and response
-            prompt_idx = i % len(sample_prompts)
-            if is_correct:
-                response = sample_responses_good[prompt_idx]
+            # Select reason
+            if is_success:
+                reason = random.choice(pass_reasons[metric])
             else:
-                response = sample_responses_bad[prompt_idx]
+                reason = random.choice(fail_reasons[metric])
 
-            data.append({
-                'sample_id': f'{metric[:3].upper()}-{sample_id:05d}',
-                'prompt': sample_prompts[prompt_idx],
-                'response': response,
-                'metric_name': metric,
-                'expected_label': expected,
-                'predicted_label': predicted,
-                'confidence_score': round(score, 4),
-                'is_pass': is_correct,
-                'timestamp': datetime.now().isoformat(),
-                'model_version': 'gpt-4-turbo',
-                'evaluation_source': 'automated'
-            })
+            # Add metric columns
+            row[f'{metric}_score'] = round(score, 4)
+            row[f'{metric}_success'] = is_success
+            row[f'{metric}_reason'] = reason
+
+        data.append(row)
 
     return pd.DataFrame(data)
 
@@ -172,19 +220,23 @@ def main():
     print("\n1. Creating synthetic evaluation dataset...")
     df = create_synthetic_dataset(n_samples=500)
     print(f"   Created dataset with {len(df)} samples")
-    print(f"   Metrics: {df['metric_name'].unique().tolist()}")
 
-    # Define column mapping
+    # Get metrics from column names (columns ending with _score)
+    metrics = [col.replace('_score', '') for col in df.columns if col.endswith('_score')]
+    print(f"   Metrics: {metrics}")
+
+    # Define column mapping for wide format
     # This maps our DataFrame columns to the standard fields expected by the report generator
+    # For wide format, we specify the base column names and the metric list
     column_mapping = {
         'id': 'sample_id',
         'input': 'prompt',
         'output': 'response',
-        'metric': 'metric_name',
-        'expected': 'expected_label',
-        'predicted': 'predicted_label',
-        'score': 'confidence_score',
-        'is_correct': 'is_pass'
+        # Wide format configuration: specify metric column patterns
+        'metrics': metrics,  # List of metric names
+        'score_suffix': '_score',      # e.g., toxicity_score
+        'success_suffix': '_success',  # e.g., toxicity_success
+        'reason_suffix': '_reason',    # e.g., toxicity_reason
     }
 
     # Create dataset info
@@ -198,7 +250,7 @@ def main():
         additional_info={
             'Model Under Test': 'gpt-4-turbo',
             'Evaluation Framework': 'MLflow Evaluation Pipeline v3.2',
-            'Number of Metrics': len(df['metric_name'].unique())
+            'Number of Metrics': len(metrics)
         }
     )
 
@@ -278,8 +330,11 @@ Report Features:
 
 Dataset statistics:
   - Total samples: {len(df)}
-  - Metrics evaluated: {len(df['metric_name'].unique())}
-  - Metrics: {', '.join(df['metric_name'].unique())}
+  - Metrics evaluated: {len(metrics)}
+  - Metrics: {', '.join(metrics)}
+
+Data format: Wide format (columns per metric)
+  Each row contains: {', '.join([f'{m}_score, {m}_success, {m}_reason' for m in metrics[:2]])}...
 
 To use with MLflow:
   import mlflow
