@@ -413,6 +413,27 @@ section {
 .status-badge.warning { background: #fef3c7; color: #92400e; }
 .status-badge.fail { background: #fee2e2; color: #991b1b; }
 
+/* Compact Table */
+.compact-table {
+    font-size: 9pt;
+}
+
+.compact-table th,
+.compact-table td {
+    padding: 8px 10px;
+    text-align: center;
+}
+
+.compact-table th:first-child,
+.compact-table td:first-child {
+    text-align: left;
+}
+
+.compact-table th:last-child,
+.compact-table td:last-child {
+    text-align: center;
+}
+
 /* Progress indicator */
 .progress-container {
     display: flex;
@@ -1138,17 +1159,20 @@ section {
             evaluation dimension. Results are compared against established thresholds to determine
             compliance status.</p>
 
-            <table class="data-table">
+            <table class="data-table compact-table">
                 <thead>
                     <tr>
                         <th>Metric</th>
-                        <th style="width: 180px;">Accuracy</th>
-                        <th>Precision</th>
-                        <th>Recall</th>
-                        <th>F1 Score</th>
-                        <th>ROC-AUC</th>
-                        <th>Samples</th>
-                        <th>Errors</th>
+                        <th>Acc</th>
+                        <th>Prec</th>
+                        <th>Rec</th>
+                        <th>F1</th>
+                        <th>Mean</th>
+                        <th>Med</th>
+                        <th>Q25</th>
+                        <th>Q75</th>
+                        <th>N</th>
+                        <th>Err</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -1156,57 +1180,45 @@ section {
                     
                 <tr>
                     <td><strong>Toxicity</strong></td>
-                    <td>
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div class="progress-fill success" style="width: 88.55421686746988%"></div>
-                            </div>
-                            <span class="progress-value">88.6%</span>
-                        </div>
-                    </td>
-                    <td>0.9423</td>
-                    <td>0.8829</td>
-                    <td>0.9116</td>
-                    <td>0.5340</td>
+                    <td>88.6%</td>
+                    <td>0.94</td>
+                    <td>0.88</td>
+                    <td>0.91</td>
+                    <td>0.74</td>
+                    <td>0.80</td>
+                    <td>0.66</td>
+                    <td>0.87</td>
                     <td>166</td>
                     <td class="text-danger">19</td>
                     <td><span class="status-badge pass">PASS</span></td>
                 </tr>
                 <tr>
                     <td><strong>Faithfulness</strong></td>
-                    <td>
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div class="progress-fill danger" style="width: 74.09638554216868%"></div>
-                            </div>
-                            <span class="progress-value">74.1%</span>
-                        </div>
-                    </td>
-                    <td>0.8600</td>
-                    <td>0.7478</td>
-                    <td>0.8000</td>
-                    <td>0.4820</td>
+                    <td>74.1%</td>
+                    <td>0.86</td>
+                    <td>0.75</td>
+                    <td>0.80</td>
+                    <td>0.66</td>
+                    <td>0.75</td>
+                    <td>0.53</td>
+                    <td>0.85</td>
                     <td>166</td>
                     <td class="text-danger">43</td>
-                    <td><span class="status-badge fail">BELOW THRESHOLD</span></td>
+                    <td><span class="status-badge fail">FAIL</span></td>
                 </tr>
                 <tr>
                     <td><strong>Factual Accuracy</strong></td>
-                    <td>
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div class="progress-fill danger" style="width: 70.48192771084338%"></div>
-                            </div>
-                            <span class="progress-value">70.5%</span>
-                        </div>
-                    </td>
-                    <td>0.8000</td>
-                    <td>0.7339</td>
-                    <td>0.7656</td>
-                    <td>0.5609</td>
+                    <td>70.5%</td>
+                    <td>0.80</td>
+                    <td>0.73</td>
+                    <td>0.77</td>
+                    <td>0.65</td>
+                    <td>0.76</td>
+                    <td>0.44</td>
+                    <td>0.86</td>
                     <td>166</td>
                     <td class="text-danger">49</td>
-                    <td><span class="status-badge fail">BELOW THRESHOLD</span></td>
+                    <td><span class="status-badge fail">FAIL</span></td>
                 </tr>
                 </tbody>
             </table>
@@ -2249,11 +2261,6 @@ section {
                         <td>The harmonic mean of precision and recall.</td>
                         <td class="font-mono">2 * (P * R) / (P + R)</td>
                     </tr>
-                    <tr>
-                        <td><strong>ROC-AUC</strong></td>
-                        <td>Area under the receiver operating characteristic curve.</td>
-                        <td>Integral of TPR vs FPR</td>
-                    </tr>
                 </tbody>
             </table>
 
@@ -2270,8 +2277,6 @@ section {
                     <tr><td><strong>TN</strong></td><td>True Negative - Correctly predicted negative class</td></tr>
                     <tr><td><strong>FP</strong></td><td>False Positive - Incorrectly predicted positive class</td></tr>
                     <tr><td><strong>FN</strong></td><td>False Negative - Incorrectly predicted negative class</td></tr>
-                    <tr><td><strong>ROC</strong></td><td>Receiver Operating Characteristic</td></tr>
-                    <tr><td><strong>AUC</strong></td><td>Area Under Curve</td></tr>
                 </tbody>
             </table>
         </section>
@@ -2284,7 +2289,7 @@ section {
                 </div>
                 <div class="footer-meta">
                     <div>Document ID: EVAL-20251227-QUICK_RU</div>
-                    <div>Generated: 2025-12-27 19:48:04 UTC</div>
+                    <div>Generated: 2025-12-27 20:29:09 UTC</div>
                     <div>Page <span class="page-number"></span></div>
                 </div>
             </div>

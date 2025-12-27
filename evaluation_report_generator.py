@@ -52,10 +52,15 @@ class MetricResult:
     recall: float = 0.0
     f1: float = 0.0
     support: int = 0
-    roc_auc: Optional[float] = None
     error_count: int = 0
     error_rate: float = 0.0
     threshold: float = 0.5
+    score_mean: Optional[float] = None
+    score_median: Optional[float] = None
+    score_min: Optional[float] = None
+    score_max: Optional[float] = None
+    score_q25: Optional[float] = None
+    score_q75: Optional[float] = None
     additional_stats: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -180,16 +185,17 @@ class EvaluationReportGenerator:
                 correct = 0
                 total = len(metric_df)
 
-            roc_auc = None
-            if score_col in metric_df.columns and expected_col in metric_df.columns:
-                try:
-                    from sklearn.metrics import roc_auc_score
-                    y_true = metric_df[expected_col]
-                    y_score = metric_df[score_col]
-                    if len(y_true.unique()) > 1:
-                        roc_auc = roc_auc_score(y_true, y_score)
-                except:
-                    pass
+            # Calculate score statistics
+            score_mean = score_median = score_min = score_max = score_q25 = score_q75 = None
+            if score_col in metric_df.columns:
+                scores = metric_df[score_col].dropna()
+                if len(scores) > 0:
+                    score_mean = float(scores.mean())
+                    score_median = float(scores.median())
+                    score_min = float(scores.min())
+                    score_max = float(scores.max())
+                    score_q25 = float(scores.quantile(0.25))
+                    score_q75 = float(scores.quantile(0.75))
 
             error_count = total - correct if is_correct_col in metric_df.columns else 0
             error_rate = error_count / total if total > 0 else 0
@@ -202,9 +208,14 @@ class EvaluationReportGenerator:
                 recall=recall,
                 f1=f1,
                 support=total,
-                roc_auc=roc_auc,
                 error_count=error_count,
-                error_rate=error_rate
+                error_rate=error_rate,
+                score_mean=score_mean,
+                score_median=score_median,
+                score_min=score_min,
+                score_max=score_max,
+                score_q25=score_q25,
+                score_q75=score_q75
             )
 
             self.examples[metric] = self._extract_examples(metric_df, metric)
@@ -676,28 +687,26 @@ class EvaluationReportGenerator:
         if not self.metric_results:
             return ""
 
+        def fmt_stat(val: Optional[float]) -> str:
+            return f"{val:.2f}" if val is not None else "N/A"
+
         rows_html = ""
         for metric_name, result in self.metric_results.items():
             status_class = "pass" if result.accuracy >= self.thresholds['accuracy'] else "fail"
-            status_text = "PASS" if result.accuracy >= self.thresholds['accuracy'] else "BELOW THRESHOLD"
+            status_text = "PASS" if result.accuracy >= self.thresholds['accuracy'] else "FAIL"
             progress_class = "success" if result.accuracy >= self.thresholds['accuracy'] else ("warning" if result.accuracy >= self.thresholds['accuracy'] * 0.9 else "danger")
-            roc_auc_str = f"{result.roc_auc:.4f}" if result.roc_auc is not None else "N/A"
 
             rows_html += f"""
                 <tr>
                     <td><strong>{html.escape(result.display_name)}</strong></td>
-                    <td>
-                        <div class="progress-container">
-                            <div class="progress-bar">
-                                <div class="progress-fill {progress_class}" style="width: {result.accuracy*100}%"></div>
-                            </div>
-                            <span class="progress-value">{result.accuracy:.1%}</span>
-                        </div>
-                    </td>
-                    <td>{result.precision:.4f}</td>
-                    <td>{result.recall:.4f}</td>
-                    <td>{result.f1:.4f}</td>
-                    <td>{roc_auc_str}</td>
+                    <td>{result.accuracy:.1%}</td>
+                    <td>{result.precision:.2f}</td>
+                    <td>{result.recall:.2f}</td>
+                    <td>{result.f1:.2f}</td>
+                    <td>{fmt_stat(result.score_mean)}</td>
+                    <td>{fmt_stat(result.score_median)}</td>
+                    <td>{fmt_stat(result.score_q25)}</td>
+                    <td>{fmt_stat(result.score_q75)}</td>
                     <td>{result.support:,}</td>
                     <td class="text-danger">{result.error_count:,}</td>
                     <td><span class="status-badge {status_class}">{status_text}</span></td>
@@ -712,17 +721,20 @@ class EvaluationReportGenerator:
             evaluation dimension. Results are compared against established thresholds to determine
             compliance status.</p>
 
-            <table class="data-table">
+            <table class="data-table compact-table">
                 <thead>
                     <tr>
                         <th>Metric</th>
-                        <th style="width: 180px;">Accuracy</th>
-                        <th>Precision</th>
-                        <th>Recall</th>
-                        <th>F1 Score</th>
-                        <th>ROC-AUC</th>
-                        <th>Samples</th>
-                        <th>Errors</th>
+                        <th>Acc</th>
+                        <th>Prec</th>
+                        <th>Rec</th>
+                        <th>F1</th>
+                        <th>Mean</th>
+                        <th>Med</th>
+                        <th>Q25</th>
+                        <th>Q75</th>
+                        <th>N</th>
+                        <th>Err</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -868,11 +880,6 @@ class EvaluationReportGenerator:
                         <td>The harmonic mean of precision and recall.</td>
                         <td class="font-mono">2 * (P * R) / (P + R)</td>
                     </tr>
-                    <tr>
-                        <td><strong>ROC-AUC</strong></td>
-                        <td>Area under the receiver operating characteristic curve.</td>
-                        <td>Integral of TPR vs FPR</td>
-                    </tr>
                 </tbody>
             </table>
 
@@ -889,8 +896,6 @@ class EvaluationReportGenerator:
                     <tr><td><strong>TN</strong></td><td>True Negative - Correctly predicted negative class</td></tr>
                     <tr><td><strong>FP</strong></td><td>False Positive - Incorrectly predicted positive class</td></tr>
                     <tr><td><strong>FN</strong></td><td>False Negative - Incorrectly predicted negative class</td></tr>
-                    <tr><td><strong>ROC</strong></td><td>Receiver Operating Characteristic</td></tr>
-                    <tr><td><strong>AUC</strong></td><td>Area Under Curve</td></tr>
                 </tbody>
             </table>
         </section>"""

@@ -198,8 +198,7 @@ def main():
         additional_info={
             'Model Under Test': 'gpt-4-turbo',
             'Evaluation Framework': 'MLflow Evaluation Pipeline v3.2',
-            'Number of Metrics': len(df['metric_name'].unique()),
-            'Annotation Type': 'Automated + Human Review'
+            'Number of Metrics': len(df['metric_name'].unique())
         }
     )
 

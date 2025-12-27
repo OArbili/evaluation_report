@@ -406,6 +406,27 @@ section {
 .status-badge.warning { background: #fef3c7; color: #92400e; }
 .status-badge.fail { background: #fee2e2; color: #991b1b; }
 
+/* Compact Table */
+.compact-table {
+    font-size: 9pt;
+}
+
+.compact-table th,
+.compact-table td {
+    padding: 8px 10px;
+    text-align: center;
+}
+
+.compact-table th:first-child,
+.compact-table td:first-child {
+    text-align: left;
+}
+
+.compact-table th:last-child,
+.compact-table td:last-child {
+    text-align: center;
+}
+
 /* Progress indicator */
 .progress-container {
     display: flex;
