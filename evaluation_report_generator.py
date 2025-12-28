@@ -52,11 +52,15 @@ class MetricResult:
     recall: float = 0.0
     f1: float = 0.0
     support: int = 0
+    correct_count: int = 0
+    incorrect_count: int = 0
+    null_count: int = 0
     error_count: int = 0
     error_rate: float = 0.0
     threshold: float = 0.5
     score_mean: Optional[float] = None
     score_median: Optional[float] = None
+    score_std: Optional[float] = None
     score_min: Optional[float] = None
     score_max: Optional[float] = None
     score_q25: Optional[float] = None
@@ -75,6 +79,7 @@ class Example:
     score: float
     metric_name: str
     is_correct: bool
+    example_type: str = ""  # 'false_positive' or 'false_negative'
     reason: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -118,29 +123,85 @@ class ColumnMapping:
         }
 
 
+class ExamplesColumnMapping:
+    """Maps raw example columns to required report fields.
+
+    Example mapping:
+        {
+            'input': 'user_input',           # raw column -> report field
+            'output': 'output_text',
+            'score': 'bias_score',
+            'success': 'bias_success',
+            'reason': 'bias_reason'
+        }
+    """
+
+    def __init__(self, mapping: Dict[str, str]):
+        self.mapping = mapping
+
+    def get(self, field: str, default: str = None) -> str:
+        """Get the raw column name for a report field."""
+        return self.mapping.get(field, default or field)
+
+    def has(self, field: str) -> bool:
+        return field in self.mapping
+
+
 class EvaluationReportGenerator:
-    """Generates professional HTML reports for ML evaluation runs."""
+    """Generates professional HTML reports for ML evaluation runs.
+
+    Supports two input modes:
+    1. Legacy mode: Raw DataFrame with all samples
+    2. New mode: Results DataFrame (aggregated stats) + examples list (false positives/negatives)
+    """
 
     def __init__(
         self,
-        df: pd.DataFrame,
-        column_mapping: ColumnMapping,
-        dataset_info: DatasetInfo,
+        results_df: pd.DataFrame = None,
+        examples_list: List[Dict[str, Any]] = None,
+        examples_column_mapping: Dict[str, str] = None,
+        dataset_info: DatasetInfo = None,
         report_metadata: ReportMetadata = None,
-        metrics: List[str] = None,
         run_id: str = None,
         run_name: str = None,
         thresholds: Dict[str, float] = None,
-        embed_css: bool = True
+        embed_css: bool = True,
+        # Legacy parameters for backward compatibility
+        df: pd.DataFrame = None,
+        column_mapping: ColumnMapping = None,
+        metrics: List[str] = None,
     ):
-        self.df = df.copy()
-        self.column_mapping = column_mapping
-        self.dataset_info = dataset_info
+        """
+        Initialize the report generator.
+
+        New input format:
+            results_df: DataFrame with columns:
+                - metric: metric name
+                - correct_count, incorrect_count, null_count, total_count
+                - accuracy, precision, recall, f1_score
+                - mean, median, std, min, max, q25, q75
+
+            examples_list: List of dicts, each with:
+                - 'metric': metric name
+                - 'false_negatives': list of raw example dicts
+                - 'false_positives': list of raw example dicts
+
+            examples_column_mapping: Dict mapping raw column names to required fields:
+                - 'input': column name for user input
+                - 'output': column name for model output
+                - 'score': column name for metric score
+                - 'success': column name for success flag
+                - 'reason': column name for reason/explanation
+
+        Legacy input format (for backward compatibility):
+            df: Raw DataFrame with all samples
+            column_mapping: ColumnMapping object
+        """
         self.report_metadata = report_metadata or ReportMetadata()
         self.run_id = run_id or self._generate_run_id()
         self.run_name = run_name or "Model Evaluation Assessment"
         self.generated_at = datetime.now()
-        self.embed_css = embed_css  # If True, embed CSS in HTML; if False, link to external file
+        self.embed_css = embed_css
         self.thresholds = thresholds or {
             'accuracy': 0.85,
             'precision': 0.80,
@@ -148,23 +209,57 @@ class EvaluationReportGenerator:
             'f1': 0.80
         }
 
+        # Determine input mode
+        self.use_new_format = results_df is not None
+
+        if self.use_new_format:
+            # New input format
+            self.results_df = results_df.copy()
+            self.examples_list = examples_list or []
+            self.examples_column_mapping = ExamplesColumnMapping(examples_column_mapping or {})
+            self.dataset_info = dataset_info or DatasetInfo(name="Evaluation Dataset")
+
+            # Extract metrics from results DataFrame
+            if 'metric' in self.results_df.columns:
+                self.metrics = self.results_df['metric'].tolist()
+            else:
+                self.metrics = ['overall']
+
+            # Calculate total samples from results
+            if 'total_count' in self.results_df.columns:
+                self.dataset_info.size = int(self.results_df['total_count'].sum())
+
+            # Legacy attributes set to None
+            self.df = None
+            self.column_mapping = None
+
+        else:
+            # Legacy input format
+            if df is None:
+                raise ValueError("Either results_df (new format) or df (legacy format) must be provided")
+
+            self.df = df.copy()
+            self.column_mapping = column_mapping
+            self.dataset_info = dataset_info or DatasetInfo(name="Evaluation Dataset", size=len(df))
+            self.results_df = None
+            self.examples_list = None
+            self.examples_column_mapping = None
+
+            if metrics is None:
+                if column_mapping and column_mapping.is_wide_format:
+                    self.metrics = column_mapping.metrics
+                else:
+                    metric_col = column_mapping.get('metric') if column_mapping else 'metric'
+                    if metric_col in df.columns:
+                        self.metrics = df[metric_col].unique().tolist()
+                    else:
+                        self.metrics = ['overall']
+            else:
+                self.metrics = metrics
+
         # Generate document ID if not provided
         if not self.report_metadata.document_id:
             self.report_metadata.document_id = f"EVAL-{self.generated_at.strftime('%Y%m%d')}-{self.run_id[:8].upper()}"
-
-        if metrics is None:
-            # Check if using wide format (columns per metric)
-            if column_mapping.is_wide_format:
-                self.metrics = column_mapping.metrics
-            else:
-                # Long format: metrics are in a column
-                metric_col = column_mapping.get('metric')
-                if metric_col in df.columns:
-                    self.metrics = df[metric_col].unique().tolist()
-                else:
-                    self.metrics = ['overall']
-        else:
-            self.metrics = metrics
 
         self._compute_results()
 
@@ -177,10 +272,147 @@ class EvaluationReportGenerator:
         self.metric_results: Dict[str, MetricResult] = {}
         self.examples: Dict[str, List[Example]] = {}
 
-        if self.column_mapping.is_wide_format:
+        if self.use_new_format:
+            self._compute_results_from_aggregated()
+        elif self.column_mapping.is_wide_format:
             self._compute_results_wide_format()
         else:
             self._compute_results_long_format()
+
+    def _compute_results_from_aggregated(self):
+        """Compute results from pre-aggregated results DataFrame and examples list."""
+        # Process results DataFrame
+        for _, row in self.results_df.iterrows():
+            metric_name = row.get('metric', 'overall')
+
+            # Helper to safely get float values
+            def safe_float(val, default=None):
+                if pd.isna(val):
+                    return default
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return default
+
+            # Helper to safely get int values
+            def safe_int(val, default=0):
+                if pd.isna(val):
+                    return default
+                try:
+                    return int(val)
+                except (ValueError, TypeError):
+                    return default
+
+            total_count = safe_int(row.get('total_count', 0))
+            correct_count = safe_int(row.get('correct_count', 0))
+            incorrect_count = safe_int(row.get('incorrect_count', 0))
+            null_count = safe_int(row.get('null_count', 0))
+
+            self.metric_results[metric_name] = MetricResult(
+                name=metric_name,
+                display_name=metric_name.replace('_', ' ').title(),
+                accuracy=safe_float(row.get('accuracy', 0), 0.0),
+                precision=safe_float(row.get('precision', 0), 0.0),
+                recall=safe_float(row.get('recall', 0), 0.0),
+                f1=safe_float(row.get('f1_score', 0), 0.0),
+                support=total_count,
+                correct_count=correct_count,
+                incorrect_count=incorrect_count,
+                null_count=null_count,
+                error_count=incorrect_count,
+                error_rate=incorrect_count / total_count if total_count > 0 else 0,
+                score_mean=safe_float(row.get('mean')),
+                score_median=safe_float(row.get('median')),
+                score_std=safe_float(row.get('std')),
+                score_min=safe_float(row.get('min')),
+                score_max=safe_float(row.get('max')),
+                score_q25=safe_float(row.get('q25')),
+                score_q75=safe_float(row.get('q75')),
+            )
+
+            # Initialize examples for this metric
+            self.examples[metric_name] = []
+
+        # Process examples list
+        for example_dict in self.examples_list:
+            metric_name = example_dict.get('metric', 'overall')
+
+            if metric_name not in self.examples:
+                self.examples[metric_name] = []
+
+            # Process false negatives
+            for raw_example in example_dict.get('false_negatives', []):
+                example = self._convert_raw_example(raw_example, metric_name, 'false_negative')
+                self.examples[metric_name].append(example)
+
+            # Process false positives
+            for raw_example in example_dict.get('false_positives', []):
+                example = self._convert_raw_example(raw_example, metric_name, 'false_positive')
+                self.examples[metric_name].append(example)
+
+    def _convert_raw_example(self, raw: Dict[str, Any], metric_name: str, example_type: str) -> Example:
+        """Convert a raw example dict to an Example object using the column mapping."""
+        mapping = self.examples_column_mapping
+
+        # Get mapped values with defaults
+        input_col = mapping.get('input', 'input')
+        output_col = mapping.get('output', 'output')
+        id_col = mapping.get('id', 'id')
+
+        # For score, success, and reason, try metric-specific columns first
+        # e.g., bias_score, bias_success, bias_reason
+        score_col = mapping.get('score', 'score')
+        success_col = mapping.get('success', 'success')
+        reason_col = mapping.get('reason', 'reason')
+
+        # Try metric-specific column names
+        metric_score_col = f'{metric_name}_score'
+        metric_success_col = f'{metric_name}_success'
+        metric_reason_col = f'{metric_name}_reason'
+
+        # Extract values from raw example
+        input_text = str(raw.get(input_col, ''))
+        output_text = str(raw.get(output_col, ''))
+        example_id = str(raw.get(id_col, ''))
+
+        # Try metric-specific score first, then generic
+        if metric_score_col in raw:
+            score = float(raw.get(metric_score_col, 0)) if raw.get(metric_score_col) is not None else 0.0
+        else:
+            score = float(raw.get(score_col, 0)) if raw.get(score_col) is not None else 0.0
+
+        # Try metric-specific success first, then generic
+        if metric_success_col in raw:
+            is_correct = bool(raw.get(metric_success_col, False))
+        else:
+            is_correct = bool(raw.get(success_col, False))
+
+        # Try metric-specific reason first, then generic
+        if metric_reason_col in raw:
+            reason = str(raw.get(metric_reason_col, ''))
+        else:
+            reason = str(raw.get(reason_col, ''))
+
+        # Generate default reason if not provided
+        if not reason:
+            if example_type == 'false_negative':
+                reason = "Model failed to detect expected outcome"
+            else:
+                reason = "Model incorrectly flagged as positive"
+
+        return Example(
+            id=example_id,
+            input_text=input_text,
+            output_text=output_text,
+            expected=None,
+            predicted=None,
+            score=score,
+            metric_name=metric_name,
+            is_correct=is_correct,
+            example_type=example_type,
+            reason=reason,
+            metadata=raw  # Store full raw data as metadata
+        )
 
     def _compute_results_wide_format(self):
         """Compute results for wide format (columns per metric)."""
@@ -408,6 +640,9 @@ class EvaluationReportGenerator:
             'avg_recall': np.mean([r.recall for r in results]),
             'avg_f1': np.mean([r.f1 for r in results]),
             'total_support': sum(r.support for r in results),
+            'total_correct': sum(r.correct_count for r in results),
+            'total_incorrect': sum(r.incorrect_count for r in results),
+            'total_null': sum(r.null_count for r in results),
             'total_errors': sum(r.error_count for r in results),
             'metrics_count': len(results),
             'min_accuracy': min(r.accuracy for r in results),
@@ -819,27 +1054,31 @@ class EvaluationReportGenerator:
             return ""
 
         def fmt_stat(val: Optional[float]) -> str:
-            return f"{val:.2f}" if val is not None else "N/A"
+            return f"{val:.3f}" if val is not None else "N/A"
+
+        def fmt_pct(val: Optional[float]) -> str:
+            return f"{val:.1%}" if val is not None else "N/A"
 
         rows_html = ""
         for metric_name, result in self.metric_results.items():
             status_class = "pass" if result.accuracy >= self.thresholds['accuracy'] else "fail"
             status_text = "PASS" if result.accuracy >= self.thresholds['accuracy'] else "FAIL"
-            progress_class = "success" if result.accuracy >= self.thresholds['accuracy'] else ("warning" if result.accuracy >= self.thresholds['accuracy'] * 0.9 else "danger")
 
             rows_html += f"""
                 <tr>
                     <td><strong>{html.escape(result.display_name)}</strong></td>
-                    <td>{result.accuracy:.1%}</td>
-                    <td>{result.precision:.2f}</td>
-                    <td>{result.recall:.2f}</td>
-                    <td>{result.f1:.2f}</td>
+                    <td>{result.correct_count:,}</td>
+                    <td class="text-danger">{result.incorrect_count:,}</td>
+                    <td>{result.null_count:,}</td>
+                    <td>{result.support:,}</td>
+                    <td>{fmt_pct(result.accuracy)}</td>
+                    <td>{fmt_pct(result.precision)}</td>
+                    <td>{fmt_pct(result.recall)}</td>
+                    <td>{fmt_stat(result.f1)}</td>
                     <td>{fmt_stat(result.score_mean)}</td>
                     <td>{fmt_stat(result.score_median)}</td>
                     <td>{fmt_stat(result.score_q25)}</td>
                     <td>{fmt_stat(result.score_q75)}</td>
-                    <td>{result.support:,}</td>
-                    <td class="text-danger">{result.error_count:,}</td>
                     <td><span class="status-badge {status_class}">{status_text}</span></td>
                 </tr>"""
 
@@ -852,10 +1091,15 @@ class EvaluationReportGenerator:
             evaluation dimension. Results are compared against established thresholds to determine
             compliance status.</p>
 
+            <div class="table-scroll-container">
             <table class="data-table compact-table">
                 <thead>
                     <tr>
                         <th>Metric</th>
+                        <th>Correct</th>
+                        <th>Incorrect</th>
+                        <th>Null</th>
+                        <th>Total</th>
                         <th>Acc</th>
                         <th>Prec</th>
                         <th>Rec</th>
@@ -864,8 +1108,6 @@ class EvaluationReportGenerator:
                         <th>Med</th>
                         <th>Q25</th>
                         <th>Q75</th>
-                        <th>N</th>
-                        <th>Err</th>
                         <th>Status</th>
                     </tr>
                 </thead>
@@ -873,6 +1115,7 @@ class EvaluationReportGenerator:
                     {rows_html}
                 </tbody>
             </table>
+            </div>
         </section>"""
 
     def _generate_sample_analysis_section(self) -> str:
@@ -893,12 +1136,15 @@ class EvaluationReportGenerator:
             active_class = "active" if i == 0 else ""
             samples_html = self._generate_sample_table(examples, metric_name)
 
-            correct_count = sum(1 for e in examples if e.is_correct)
-            incorrect_count = len(examples) - correct_count
+            # Count by example type (for new format) or by is_correct (for legacy)
+            false_neg_count = sum(1 for e in examples if e.example_type == 'false_negative')
+            false_pos_count = sum(1 for e in examples if e.example_type == 'false_positive')
 
-            contents_html += f"""
-            <div id="samples-{metric_name}" class="sample-content {active_class}">
-                <div class="filter-controls">
+            # If no example_type set (legacy format), fall back to is_correct
+            if false_neg_count == 0 and false_pos_count == 0:
+                correct_count = sum(1 for e in examples if e.is_correct)
+                incorrect_count = len(examples) - correct_count
+                filter_buttons = f"""
                     <button class="filter-btn active" onclick="filterSampleRows('{metric_name}', 'all', this)">
                         All Samples ({len(examples)})
                     </button>
@@ -907,7 +1153,23 @@ class EvaluationReportGenerator:
                     </button>
                     <button class="filter-btn" onclick="filterSampleRows('{metric_name}', 'fail', this)">
                         Failed ({incorrect_count})
+                    </button>"""
+            else:
+                filter_buttons = f"""
+                    <button class="filter-btn active" onclick="filterSampleRows('{metric_name}', 'all', this)">
+                        All Samples ({len(examples)})
                     </button>
+                    <button class="filter-btn" onclick="filterSampleRows('{metric_name}', 'false_negative', this)">
+                        False Negatives ({false_neg_count})
+                    </button>
+                    <button class="filter-btn" onclick="filterSampleRows('{metric_name}', 'false_positive', this)">
+                        False Positives ({false_pos_count})
+                    </button>"""
+
+            contents_html += f"""
+            <div id="samples-{metric_name}" class="sample-content {active_class}">
+                <div class="filter-controls">
+                    {filter_buttons}
                 </div>
                 <div class="sample-table-container">
                     {samples_html}
@@ -919,8 +1181,8 @@ class EvaluationReportGenerator:
             <div class="section-number">Section 6</div>
             <h2 class="section-title">Sample Analysis</h2>
 
-            <p>This section provides representative examples from the evaluation, including both
-            passed and failed samples. These examples support qualitative review and error pattern analysis.</p>
+            <p>This section provides representative examples from the evaluation, including
+            false positives and false negatives. These examples support qualitative review and error pattern analysis.</p>
 
             <div class="sample-tabs">
                 {tabs_html}
@@ -931,10 +1193,22 @@ class EvaluationReportGenerator:
     def _generate_sample_table(self, examples: List[Example], metric_name: str) -> str:
         """Generate HTML table for samples."""
         rows_html = ""
+
+        # Detect if we have example_type data (new format)
+        has_example_type = any(e.example_type for e in examples)
+
         for example in examples:
-            status_class = "pass" if example.is_correct else "fail"
-            status_text = "PASS" if example.is_correct else "FAIL"
-            status_badge_class = "pass" if example.is_correct else "fail"
+            # Determine status class and text based on format
+            if example.example_type:
+                # New format: use example_type
+                status_class = example.example_type  # 'false_negative' or 'false_positive'
+                status_text = "FN" if example.example_type == 'false_negative' else "FP"
+                status_badge_class = "fail"  # Both are error cases
+            else:
+                # Legacy format: use is_correct
+                status_class = "pass" if example.is_correct else "fail"
+                status_text = "PASS" if example.is_correct else "FAIL"
+                status_badge_class = "pass" if example.is_correct else "fail"
 
             # Truncate long text for display
             input_display = example.input_text[:150] + "..." if len(example.input_text) > 150 else example.input_text
@@ -958,6 +1232,8 @@ class EvaluationReportGenerator:
                     <td class="cell-reason">{html.escape(reason_display)}</td>
                 </tr>"""
 
+        type_header = "Type" if has_example_type else "Status"
+
         return f"""
             <table class="sample-data-table" id="sample-table-{metric_name}">
                 <thead>
@@ -965,7 +1241,7 @@ class EvaluationReportGenerator:
                         <th style="width: 25%;">User Input</th>
                         <th style="width: 30%;">LLM Output</th>
                         <th style="width: 10%;">Score</th>
-                        <th style="width: 10%;">Status</th>
+                        <th style="width: 10%;">{type_header}</th>
                         <th style="width: 25%;">Reason</th>
                     </tr>
                 </thead>
@@ -1077,8 +1353,12 @@ class EvaluationReportGenerator:
                         row.classList.remove('hidden');
                     } else if (filter === 'pass') {
                         row.classList.toggle('hidden', status !== 'pass');
-                    } else {
+                    } else if (filter === 'fail') {
                         row.classList.toggle('hidden', status !== 'fail');
+                    } else if (filter === 'false_negative') {
+                        row.classList.toggle('hidden', status !== 'false_negative');
+                    } else if (filter === 'false_positive') {
+                        row.classList.toggle('hidden', status !== 'false_positive');
                     }
                 });
             }
