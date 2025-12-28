@@ -183,8 +183,8 @@ class EvaluationReportGenerator:
 
             examples_list: List of dicts, each with:
                 - 'metric': metric name
-                - 'false_negatives': list of raw example dicts
-                - 'false_positives': list of raw example dicts
+                - 'false_negatives': DataFrame or list of raw example dicts
+                - 'false_positives': DataFrame or list of raw example dicts
 
             examples_column_mapping: Dict mapping raw column names to required fields:
                 - 'input': column name for user input
@@ -340,15 +340,27 @@ class EvaluationReportGenerator:
             if metric_name not in self.examples:
                 self.examples[metric_name] = []
 
-            # Process false negatives
-            for raw_example in example_dict.get('false_negatives', []):
-                example = self._convert_raw_example(raw_example, metric_name, 'false_negative')
-                self.examples[metric_name].append(example)
+            # Process false negatives (can be DataFrame or list of dicts)
+            false_negatives = example_dict.get('false_negatives', [])
+            if isinstance(false_negatives, pd.DataFrame):
+                for _, row in false_negatives.iterrows():
+                    example = self._convert_raw_example(row.to_dict(), metric_name, 'false_negative')
+                    self.examples[metric_name].append(example)
+            else:
+                for raw_example in false_negatives:
+                    example = self._convert_raw_example(raw_example, metric_name, 'false_negative')
+                    self.examples[metric_name].append(example)
 
-            # Process false positives
-            for raw_example in example_dict.get('false_positives', []):
-                example = self._convert_raw_example(raw_example, metric_name, 'false_positive')
-                self.examples[metric_name].append(example)
+            # Process false positives (can be DataFrame or list of dicts)
+            false_positives = example_dict.get('false_positives', [])
+            if isinstance(false_positives, pd.DataFrame):
+                for _, row in false_positives.iterrows():
+                    example = self._convert_raw_example(row.to_dict(), metric_name, 'false_positive')
+                    self.examples[metric_name].append(example)
+            else:
+                for raw_example in false_positives:
+                    example = self._convert_raw_example(raw_example, metric_name, 'false_positive')
+                    self.examples[metric_name].append(example)
 
     def _convert_raw_example(self, raw: Dict[str, Any], metric_name: str, example_type: str) -> Example:
         """Convert a raw example dict to an Example object using the column mapping."""

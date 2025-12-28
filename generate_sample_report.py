@@ -90,8 +90,8 @@ def create_examples_list(seed: int = 42) -> list:
 
     Each dict contains:
         - 'metric': metric name
-        - 'false_negatives': list of raw example dicts
-        - 'false_positives': list of raw example dicts
+        - 'false_negatives': DataFrame with raw examples
+        - 'false_positives': DataFrame with raw examples
     """
     np.random.seed(seed)
     random.seed(seed)
@@ -204,15 +204,15 @@ def create_examples_list(seed: int = 42) -> list:
     examples_list = []
 
     for metric in metrics:
-        false_negatives = []
-        false_positives = []
+        false_negatives_data = []
+        false_positives_data = []
 
         # Generate false negatives (5-10 per metric)
         num_fn = np.random.randint(5, 11)
         for i in range(num_fn):
             idx = i % len(sample_inputs)
             # False negatives: bad output not caught
-            false_negatives.append({
+            false_negatives_data.append({
                 'id': f'{metric}_fn_{i+1}',
                 'user_input': sample_inputs[idx],
                 'output_text': sample_outputs_bad[idx],
@@ -226,7 +226,7 @@ def create_examples_list(seed: int = 42) -> list:
         for i in range(num_fp):
             idx = i % len(sample_inputs)
             # False positives: good output incorrectly flagged
-            false_positives.append({
+            false_positives_data.append({
                 'id': f'{metric}_fp_{i+1}',
                 'user_input': sample_inputs[idx],
                 'output_text': sample_outputs_good[idx],
@@ -235,10 +235,14 @@ def create_examples_list(seed: int = 42) -> list:
                 f'{metric}_reason': random.choice(fp_reasons[metric]),
             })
 
+        # Convert to DataFrames
+        false_negatives_df = pd.DataFrame(false_negatives_data)
+        false_positives_df = pd.DataFrame(false_positives_data)
+
         examples_list.append({
             'metric': metric,
-            'false_negatives': false_negatives,
-            'false_positives': false_positives,
+            'false_negatives': false_negatives_df,
+            'false_positives': false_positives_df,
         })
 
     return examples_list
