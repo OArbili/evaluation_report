@@ -31,18 +31,15 @@ class ReportHTMLGenerator:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Model Evaluation Report - {html.escape(self.gen.report_metadata.document_id)}</title>
+    <title>Hallucination Evaluation Report</title>
     {self._generate_styles()}
 </head>
 <body>
     <div class="document">
         {self._generate_cover_page(compliance_status)}
-        {self._generate_table_of_contents()}
         {self._generate_executive_summary(overall_stats, compliance_status, compliance_summary, compliance_issues)}
-        {self._generate_methodology_section()}
         {self._generate_dataset_section()}
-        {self._generate_results_section(overall_stats)}
-        {self._generate_detailed_metrics_section()}
+        {self._generate_devtest_split_section()}
         {self._generate_sample_analysis_section()}
         {self._generate_appendix()}
         {self._generate_footer()}
@@ -115,7 +112,17 @@ class ReportHTMLGenerator:
         return """<style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         .document { max-width: 900px; margin: 0 auto; }
-        .cover-page { background: #1e3a8a; color: white; padding: 40px; margin-bottom: 20px; }
+        .cover-page { background: #1e3a8a; color: white; padding: 50px; margin-bottom: 20px; }
+        .cover-title { font-size: 28pt; font-weight: 600; margin-bottom: 8px; }
+        .cover-subtitle { font-size: 12pt; color: rgba(255,255,255,0.7); margin-bottom: 40px; }
+        .cover-meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px 40px; max-width: 700px; margin: 0 auto 40px; }
+        .meta-item { display: flex; flex-direction: column; gap: 4px; }
+        .meta-label { font-size: 9pt; color: rgba(255,255,255,0.5); text-transform: uppercase; }
+        .meta-value { font-size: 11pt; font-weight: 500; }
+        .cover-status { display: inline-block; padding: 12px 32px; font-weight: 600; border-radius: 4px; }
+        .cover-status.pass { background: #059669; }
+        .cover-status.conditional { background: #d97706; }
+        .cover-status.review { background: #dc2626; }
         section { margin-bottom: 30px; padding: 20px; border: 1px solid #e5e7eb; }
         .data-table { width: 100%; border-collapse: collapse; }
         .data-table th, .data-table td { padding: 10px; border: 1px solid #e5e7eb; text-align: left; }
@@ -123,50 +130,58 @@ class ReportHTMLGenerator:
     </style>"""
 
     def _generate_cover_page(self, compliance_status: str) -> str:
-        """Generate the cover page."""
+        """Generate a professional cover page with essential metadata."""
         status_class = 'pass' if compliance_status == 'PASS' else ('conditional' if compliance_status == 'CONDITIONAL' else 'review')
-        status_icon = '&#10003;' if compliance_status == 'PASS' else ('!' if compliance_status == 'CONDITIONAL' else '&#10007;')
+
+        # Add DRAFT to classification if not already present
+        classification = self.gen.report_metadata.classification
+        if 'DRAFT' not in classification.upper():
+            classification = f"{classification} - DRAFT"
+
+        # Get additional dataset info
+        additional_info = self.gen.dataset_info.additional_info
+        model_name = additional_info.get('Model Under Test', 'AI Assistant')
+        eval_framework = additional_info.get('Evaluation Framework', 'Evaluation Pipeline')
+        dev_samples = additional_info.get('Dev Samples', 'N/A')
+        test_samples = additional_info.get('Test Samples', 'N/A')
 
         return f"""
         <div class="cover-page">
-            <div class="cover-header">
-                <div class="cover-classification">{html.escape(self.gen.report_metadata.classification)}</div>
-            </div>
+            <div class="cover-classification">{html.escape(classification)}</div>
 
-            <div class="cover-title-section">
-                <div class="cover-subtitle">AI/ML Model Evaluation Report</div>
+            <div class="cover-content">
                 <h1 class="cover-title">{html.escape(self.gen.dataset_info.name)}</h1>
-                <div class="cover-run-name">{html.escape(self.gen.run_name)}</div>
-                <div class="cover-status {status_class}">
-                    <span class="cover-status-icon">{status_icon}</span>
-                    <span>Evaluation Status: {compliance_status}</span>
-                </div>
-            </div>
+                <p class="cover-subtitle">Model Evaluation Report</p>
 
-            <div class="cover-meta">
-                <div class="cover-meta-item">
-                    <label>Document ID</label>
-                    <value>{html.escape(self.gen.report_metadata.document_id)}</value>
+                <div class="cover-meta-grid">
+                    <div class="meta-item">
+                        <span class="meta-label">Run Id</span>
+                        <span class="meta-value">{html.escape(self.gen.report_metadata.document_id)}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Generated</span>
+                        <span class="meta-value">{self.gen.generated_at.strftime('%B %d, %Y')}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Model Under Test</span>
+                        <span class="meta-value">{html.escape(str(model_name))}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Total Samples</span>
+                        <span class="meta-value">{self.gen.dataset_info.size:,}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Dev / Test Split</span>
+                        <span class="meta-value">{dev_samples:,} / {test_samples:,}</span>
+                    </div>
+                    <div class="meta-item">
+                        <span class="meta-label">Prepared By</span>
+                        <span class="meta-value">{html.escape(self.gen.report_metadata.prepared_by)}</span>
+                    </div>
                 </div>
-                <div class="cover-meta-item">
-                    <label>Report Version</label>
-                    <value>{html.escape(self.gen.report_metadata.report_version)}</value>
-                </div>
-                <div class="cover-meta-item">
-                    <label>Generated Date</label>
-                    <value>{self.gen.generated_at.strftime('%B %d, %Y')}</value>
-                </div>
-                <div class="cover-meta-item">
-                    <label>Evaluation Run ID</label>
-                    <value class="font-mono">{html.escape(self.gen.run_id)}</value>
-                </div>
-                <div class="cover-meta-item">
-                    <label>Prepared By</label>
-                    <value>{html.escape(self.gen.report_metadata.prepared_by or 'Automated Pipeline')}</value>
-                </div>
-                <div class="cover-meta-item">
-                    <label>Department</label>
-                    <value>{html.escape(self.gen.report_metadata.department)}</value>
+
+                <div class="cover-status {status_class}">
+                    Evaluation Status: {compliance_status}
                 </div>
             </div>
         </div>"""
@@ -213,30 +228,23 @@ class ReportHTMLGenerator:
         if not stats:
             return ""
 
-        def get_status_class(value: float, threshold: float) -> str:
-            if value >= threshold:
-                return "success"
-            elif value >= threshold * 0.9:
-                return "warning"
-            return "danger"
-
         issues_html = ""
         if issues:
             issues_items = "".join(f"<li>{html.escape(issue)}</li>" for issue in issues)
             issues_html = f"""
-            <div class="issues-list">
-                <h5>Items Requiring Attention</h5>
-                <ul>{issues_items}</ul>
-            </div>"""
+                    <div class="issues-section">
+                        <h5>Items Requiring Attention</h5>
+                        <ul>{issues_items}</ul>
+                    </div>"""
 
         findings_html = ""
         for metric_name, result in self.gen.metric_results.items():
-            indicator_class = "success" if result.accuracy >= self.gen.thresholds['accuracy'] else "danger"
+            indicator_class = "success" if result.accuracy >= self.gen.thresholds['accuracy'] else ("warning" if result.accuracy >= self.gen.thresholds['accuracy'] * 0.9 else "danger")
             findings_html += f"""
-            <div class="finding-item">
-                <span class="finding-indicator {indicator_class}"></span>
-                <span><strong>{html.escape(result.display_name)}:</strong> {result.accuracy:.1%} accuracy with {result.support:,} samples evaluated</span>
-            </div>"""
+                    <div class="finding-item">
+                        <span class="finding-indicator {indicator_class}"></span>
+                        <span><strong>{html.escape(result.display_name)}:</strong> {result.accuracy:.1%} accuracy ({result.correct_count}/{result.support} samples)</span>
+                    </div>"""
 
         return f"""
         <section class="page-break">
@@ -244,50 +252,22 @@ class ReportHTMLGenerator:
             <h2 class="section-title">Executive Summary</h2>
 
             <div class="exec-summary-grid">
-                <div class="summary-text">
-                    <p>This report presents the evaluation results for <strong>{html.escape(self.gen.dataset_info.name)}</strong>,
-                    conducted as part of the ongoing model risk management and validation process. The evaluation
-                    assessed model performance across {stats['metrics_count']} distinct metrics using a dataset of
-                    {stats['total_support']:,} samples.</p>
+                <div class="exec-summary-text">
+                    <p>This report presents the hallucination evaluation results for the <strong>AI Assistant</strong>,
+                    assessing model performance across faithfulness and custom hallucination metrics using a dataset of
+                    <strong>{stats['total_support']:,} samples</strong>.</p>
 
-                    <div class="summary-highlight">
-                        <div class="summary-highlight-title">Overall Assessment: {status}</div>
-                        <p>{summary}</p>
-                    </div>
+                    <p><strong>Overall Assessment: {status}</strong> - {summary}</p>
 
-                    <p>The evaluation methodology follows established best practices for AI/ML model validation,
-                    measuring key performance indicators including accuracy, precision, recall, and F1-score.
-                    Results are compared against predefined thresholds to determine compliance status.</p>
+                    <p>The evaluation methodology measures how well the model's responses are grounded in the provided
+                    context, identifying supported and unsupported facts in each response.</p>
 
                     {issues_html}
                 </div>
 
                 <div class="key-findings">
-                    <h4>Key Findings by Metric</h4>
+                    <h4>Key Findings</h4>
                     {findings_html}
-                </div>
-            </div>
-
-            <div class="metrics-overview">
-                <div class="metric-card {get_status_class(stats['avg_accuracy'], self.gen.thresholds['accuracy'])}">
-                    <div class="metric-value">{stats['avg_accuracy']:.1%}</div>
-                    <div class="metric-label">Average Accuracy</div>
-                    <div class="metric-threshold">Threshold: {self.gen.thresholds['accuracy']:.0%}</div>
-                </div>
-                <div class="metric-card {get_status_class(stats['avg_precision'], self.gen.thresholds['precision'])}">
-                    <div class="metric-value">{stats['avg_precision']:.1%}</div>
-                    <div class="metric-label">Average Precision</div>
-                    <div class="metric-threshold">Threshold: {self.gen.thresholds['precision']:.0%}</div>
-                </div>
-                <div class="metric-card {get_status_class(stats['avg_recall'], self.gen.thresholds['recall'])}">
-                    <div class="metric-value">{stats['avg_recall']:.1%}</div>
-                    <div class="metric-label">Average Recall</div>
-                    <div class="metric-threshold">Threshold: {self.gen.thresholds['recall']:.0%}</div>
-                </div>
-                <div class="metric-card {get_status_class(stats['avg_f1'], self.gen.thresholds['f1'])}">
-                    <div class="metric-value">{stats['avg_f1']:.1%}</div>
-                    <div class="metric-label">Average F1 Score</div>
-                    <div class="metric-threshold">Threshold: {self.gen.thresholds['f1']:.0%}</div>
                 </div>
             </div>
         </section>"""
@@ -343,11 +323,11 @@ class ReportHTMLGenerator:
 
         return f"""
         <section>
-            <div class="section-number">Section 3</div>
+            <div class="section-number">Section 2</div>
             <h2 class="section-title">Dataset Information</h2>
 
-            <p>This section provides details about the evaluation dataset, including its source,
-            composition, and key characteristics relevant to the evaluation process.</p>
+            <p>This section provides details about the evaluation dataset structure, including the input columns
+            and key characteristics relevant to the hallucination evaluation process.</p>
 
             <div class="info-grid">
                 <div class="info-cell">
@@ -363,22 +343,109 @@ class ReportHTMLGenerator:
                     <value>{self.gen.dataset_info.size:,}</value>
                 </div>
                 <div class="info-cell">
-                    <label>Source</label>
-                    <value>{html.escape(self.gen.dataset_info.source or 'Not specified')}</value>
-                </div>
-                <div class="info-cell">
-                    <label>Created Date</label>
-                    <value>{html.escape(self.gen.dataset_info.created_at or 'Not specified')}</value>
-                </div>
-                <div class="info-cell">
                     <label>Metrics Evaluated</label>
                     <value>{len(self.gen.metrics)}</value>
                 </div>
                 {additional_cells}
             </div>
+        </section>"""
 
-            <h3 class="subsection-title">3.1 Dataset Description</h3>
-            <p>{html.escape(self.gen.dataset_info.description or 'No description provided.')}</p>
+    def _generate_devtest_split_section(self) -> str:
+        """Generate Dev/Test Split Analysis section with per-metric tables."""
+        # Check if we have split data in results_df
+        if not hasattr(self.gen, 'results_df') or self.gen.results_df is None:
+            return ""
+
+        if 'split' not in self.gen.results_df.columns:
+            return ""
+
+        results_df = self.gen.results_df
+
+        # Get unique metrics
+        metrics = results_df['metric'].unique()
+
+        # Build a table for each metric
+        metric_tables_html = ""
+        for metric in metrics:
+            metric_data = results_df[results_df['metric'] == metric]
+            dev_row = metric_data[metric_data['split'] == 'dev'].iloc[0] if len(metric_data[metric_data['split'] == 'dev']) > 0 else None
+            test_row = metric_data[metric_data['split'] == 'test'].iloc[0] if len(metric_data[metric_data['split'] == 'test']) > 0 else None
+
+            display_name = dev_row['display_name'] if dev_row is not None else (test_row['display_name'] if test_row is not None else metric.replace('_', ' ').title())
+
+            # Build rows for DEV and TEST
+            rows_html = ""
+            for split_name, row in [('DEV', dev_row), ('TEST', test_row)]:
+                if row is not None:
+                    support = int(row['total_count'])
+                    pass_count = int(row['correct_count'])
+                    fail_count = int(row['incorrect_count'])
+                    pass_rate = row['accuracy']
+                    mean_score = f"{row['mean']:.3f}" if row['mean'] is not None else "N/A"
+
+                    status_class = "pass" if pass_rate >= self.gen.thresholds['accuracy'] else "fail"
+                    status_text = "PASS" if pass_rate >= self.gen.thresholds['accuracy'] else "FAIL"
+
+                    rows_html += f"""
+                    <tr>
+                        <td><strong>{split_name}</strong></td>
+                        <td>{support:,}</td>
+                        <td>{pass_count:,}</td>
+                        <td>{fail_count:,}</td>
+                        <td>{pass_rate:.1%}</td>
+                        <td>{pass_count}/{support}</td>
+                        <td>{mean_score}</td>
+                        <td><span class="status-badge {status_class}">{status_text}</span></td>
+                    </tr>"""
+
+            metric_tables_html += f"""
+            <div class="metric-comparison-block">
+                <h4 class="metric-comparison-title">{html.escape(display_name)}</h4>
+                <table class="data-table compact-table">
+                    <thead>
+                        <tr>
+                            <th>Split</th>
+                            <th>Support</th>
+                            <th>Pass</th>
+                            <th>Fail</th>
+                            <th>Pass Rate</th>
+                            <th>Pass Ratio</th>
+                            <th>Mean Score</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table>
+            </div>"""
+
+        # Calculate overall summaries
+        dev_df = results_df[results_df['split'] == 'dev']
+        test_df = results_df[results_df['split'] == 'test']
+
+        dev_total = int(dev_df['total_count'].sum()) if len(dev_df) > 0 else 0
+        dev_correct = int(dev_df['correct_count'].sum()) if len(dev_df) > 0 else 0
+        dev_overall = dev_correct / dev_total if dev_total > 0 else 0
+
+        test_total = int(test_df['total_count'].sum()) if len(test_df) > 0 else 0
+        test_correct = int(test_df['correct_count'].sum()) if len(test_df) > 0 else 0
+        test_overall = test_correct / test_total if test_total > 0 else 0
+
+        return f"""
+        <section class="page-break">
+            <div class="section-number">Section 3</div>
+            <h2 class="section-title">Dev/Test Split Comparison</h2>
+
+            <p>This section presents model performance across development and test splits for each metric.</p>
+
+            <div class="split-summary-inline">
+                <span><strong>DEV:</strong> {dev_total:,} samples, {dev_overall:.1%} overall pass rate</span>
+                <span class="summary-divider">|</span>
+                <span><strong>TEST:</strong> {test_total:,} samples, {test_overall:.1%} overall pass rate</span>
+            </div>
+
+            {metric_tables_html}
         </section>"""
 
     def _generate_results_section(self, stats: Dict) -> str:
@@ -459,20 +526,17 @@ class ReportHTMLGenerator:
 
         rows_html = ""
         for metric_name, result in self.gen.metric_results.items():
-            status_class = "pass" if result.accuracy >= self.gen.thresholds['accuracy'] else "fail"
-            status_text = "PASS" if result.accuracy >= self.gen.thresholds['accuracy'] else "FAIL"
+            status_class = "pass" if result.accuracy >= self.gen.thresholds['accuracy'] else ("warning" if result.accuracy >= self.gen.thresholds['accuracy'] * 0.9 else "fail")
+            status_text = "PASS" if result.accuracy >= self.gen.thresholds['accuracy'] else ("REVIEW" if result.accuracy >= self.gen.thresholds['accuracy'] * 0.9 else "FAIL")
 
             rows_html += f"""
                 <tr>
                     <td><strong>{html.escape(result.display_name)}</strong></td>
-                    <td>{result.correct_count:,}</td>
-                    <td class="text-danger">{result.incorrect_count:,}</td>
-                    <td>{result.null_count:,}</td>
                     <td>{result.support:,}</td>
+                    <td class="text-success">{result.correct_count:,}</td>
+                    <td class="text-danger">{result.incorrect_count:,}</td>
                     <td>{fmt_pct(result.accuracy)}</td>
-                    <td>{fmt_pct(result.precision)}</td>
-                    <td>{fmt_pct(result.recall)}</td>
-                    <td>{fmt_stat(result.f1)}</td>
+                    <td>{result.correct_count}/{result.support}</td>
                     <td>{fmt_stat(result.score_mean)}</td>
                     <td>{fmt_stat(result.score_median)}</td>
                     <td>{fmt_stat(result.score_q25)}</td>
@@ -482,28 +546,24 @@ class ReportHTMLGenerator:
 
         return f"""
         <section class="page-break">
-            <div class="section-number">Section 5</div>
+            <div class="section-number">Section 4</div>
             <h2 class="section-title">Detailed Metric Analysis</h2>
 
             <p>This section provides a comprehensive breakdown of performance metrics for each
-            evaluation dimension. Results are compared against established thresholds to determine
-            compliance status.</p>
+            evaluation dimension. Results include support counts and capture ratios.</p>
 
             <div class="table-scroll-container">
             <table class="data-table compact-table">
                 <thead>
                     <tr>
                         <th>Metric</th>
-                        <th>Correct</th>
-                        <th>Incorrect</th>
-                        <th>Null</th>
-                        <th>Total</th>
-                        <th>Acc</th>
-                        <th>Prec</th>
-                        <th>Rec</th>
-                        <th>F1</th>
-                        <th>Mean</th>
-                        <th>Med</th>
+                        <th>Support</th>
+                        <th>Pass</th>
+                        <th>Fail</th>
+                        <th>Pass Rate</th>
+                        <th>Pass Ratio</th>
+                        <th>Mean Score</th>
+                        <th>Median</th>
                         <th>Q25</th>
                         <th>Q75</th>
                         <th>Status</th>
@@ -538,6 +598,23 @@ class ReportHTMLGenerator:
             false_neg_count = sum(1 for e in examples if e.example_type == 'false_negative')
             false_pos_count = sum(1 for e in examples if e.example_type == 'false_positive')
 
+            # Count by split
+            dev_count = sum(1 for e in examples if e.metadata.get('dev_test') == 'dev')
+            test_count = sum(1 for e in examples if e.metadata.get('dev_test') == 'test')
+            has_splits = dev_count > 0 or test_count > 0
+
+            # Split filter buttons
+            split_buttons = ""
+            if has_splits:
+                split_buttons = f"""
+                    <span class="filter-divider">|</span>
+                    <button class="filter-btn split-filter" onclick="filterSampleRowsBySplit('{metric_name}', 'dev', this)">
+                        <span class="split-badge dev">DEV</span> ({dev_count})
+                    </button>
+                    <button class="filter-btn split-filter" onclick="filterSampleRowsBySplit('{metric_name}', 'test', this)">
+                        <span class="split-badge test">TEST</span> ({test_count})
+                    </button>"""
+
             # If no example_type set (legacy format), fall back to is_correct
             if false_neg_count == 0 and false_pos_count == 0:
                 correct_count = sum(1 for e in examples if e.is_correct)
@@ -551,7 +628,8 @@ class ReportHTMLGenerator:
                     </button>
                     <button class="filter-btn" onclick="filterSampleRows('{metric_name}', 'fail', this)">
                         Failed ({incorrect_count})
-                    </button>"""
+                    </button>
+                    {split_buttons}"""
             else:
                 filter_buttons = f"""
                     <button class="filter-btn active" onclick="filterSampleRows('{metric_name}', 'all', this)">
@@ -562,7 +640,8 @@ class ReportHTMLGenerator:
                     </button>
                     <button class="filter-btn" onclick="filterSampleRows('{metric_name}', 'false_positive', this)">
                         False Positives ({false_pos_count})
-                    </button>"""
+                    </button>
+                    {split_buttons}"""
 
             contents_html += f"""
             <div id="samples-{metric_name}" class="sample-content {active_class}">
@@ -576,11 +655,11 @@ class ReportHTMLGenerator:
 
         return f"""
         <section class="page-break">
-            <div class="section-number">Section 6</div>
+            <div class="section-number">Section 4</div>
             <h2 class="section-title">Sample Analysis</h2>
 
-            <p>This section provides representative examples from the evaluation, including
-            false positives and false negatives. These examples support qualitative review and error pattern analysis.</p>
+            <p>This section provides representative examples from the evaluation, showing the faithfulness analysis
+            with supported and unsupported facts from the context.</p>
 
             <div class="sample-tabs">
                 {tabs_html}
@@ -589,11 +668,13 @@ class ReportHTMLGenerator:
         </section>"""
 
     def _generate_sample_table(self, examples: List, metric_name: str) -> str:
-        """Generate HTML table for samples."""
+        """Generate HTML table for samples with Dev/Test badges."""
         rows_html = ""
 
         # Detect if we have example_type data (new format)
         has_example_type = any(e.example_type for e in examples)
+        # Detect if we have split data
+        has_split = any(e.metadata.get('dev_test') for e in examples)
 
         for example in examples:
             # Determine status class and text based on format
@@ -608,19 +689,23 @@ class ReportHTMLGenerator:
                 status_text = "PASS" if example.is_correct else "FAIL"
                 status_badge_class = "pass" if example.is_correct else "fail"
 
+            # Get split info for badge
+            split = example.metadata.get('dev_test', '')
+            split_badge = f'<span class="split-badge {split}">{split.upper()}</span>' if split else ''
+            data_split = f'data-split="{split}"' if split else ''
+
             # Truncate long text for display
             input_display = example.input_text[:150] + "..." if len(example.input_text) > 150 else example.input_text
             output_display = example.output_text[:200] + "..." if len(example.output_text) > 200 else example.output_text
             reason_display = example.reason[:150] + "..." if len(example.reason) > 150 else example.reason
 
             rows_html += f"""
-                <tr class="sample-row" data-status="{status_class}">
+                <tr class="sample-row" data-status="{status_class}" {data_split}>
+                    <td class="cell-split">{split_badge}</td>
                     <td class="cell-input">
-                        <div class="cell-label">User Input</div>
                         <div class="cell-content">{html.escape(input_display)}</div>
                     </td>
                     <td class="cell-output">
-                        <div class="cell-label">LLM Output</div>
                         <div class="cell-content">{html.escape(output_display)}</div>
                     </td>
                     <td class="cell-score">{example.score:.4f}</td>
@@ -631,16 +716,20 @@ class ReportHTMLGenerator:
                 </tr>"""
 
         type_header = "Type" if has_example_type else "Status"
+        split_header = '<th style="width: 8%;">Split</th>' if has_split else ''
+        input_width = "22%" if has_split else "25%"
+        output_width = "27%" if has_split else "30%"
 
         return f"""
             <table class="sample-data-table" id="sample-table-{metric_name}">
                 <thead>
                     <tr>
-                        <th style="width: 25%;">User Input</th>
-                        <th style="width: 30%;">LLM Output</th>
-                        <th style="width: 10%;">Score</th>
-                        <th style="width: 10%;">{type_header}</th>
-                        <th style="width: 25%;">Reason</th>
+                        {split_header}
+                        <th style="width: {input_width};">Customer Utterance</th>
+                        <th style="width: {output_width};">Response</th>
+                        <th style="width: 8%;">Score</th>
+                        <th style="width: 8%;">{type_header}</th>
+                        <th style="width: 27%;">Reason</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -649,58 +738,49 @@ class ReportHTMLGenerator:
             </table>"""
 
     def _generate_appendix(self) -> str:
-        """Generate appendix section."""
+        """Generate appendix section with column definitions."""
         return """
         <section class="appendix-section page-break">
             <div class="section-number">Appendix A</div>
-            <h2 class="section-title">Definitions & Methodology</h2>
+            <h2 class="section-title">Column Definitions</h2>
 
-            <h3 class="subsection-title">A.1 Metric Definitions</h3>
+            <h3 class="subsection-title">A.1 Input Column Definitions</h3>
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th style="width: 150px;">Metric</th>
-                        <th>Definition</th>
-                        <th style="width: 200px;">Formula</th>
+                        <th style="width: 200px;">Column Name</th>
+                        <th>Description</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td><strong>Accuracy</strong></td>
-                        <td>The proportion of correct predictions among all predictions made.</td>
-                        <td class="font-mono">(TP + TN) / Total</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Precision</strong></td>
-                        <td>The proportion of true positive predictions among all positive predictions.</td>
-                        <td class="font-mono">TP / (TP + FP)</td>
-                    </tr>
-                    <tr>
-                        <td><strong>Recall</strong></td>
-                        <td>The proportion of actual positives correctly identified.</td>
-                        <td class="font-mono">TP / (TP + FN)</td>
-                    </tr>
-                    <tr>
-                        <td><strong>F1 Score</strong></td>
-                        <td>The harmonic mean of precision and recall.</td>
-                        <td class="font-mono">2 * (P * R) / (P + R)</td>
-                    </tr>
+                    <tr><td><strong>Dev_Test</strong></td><td>Split indicator - "dev" or "test"</td></tr>
+                    <tr><td><strong>Conv_id</strong></td><td>Unique conversation identifier</td></tr>
+                    <tr><td><strong>Turn</strong></td><td>Turn number within the conversation</td></tr>
+                    <tr><td><strong>Original_customer_utterance</strong></td><td>The original customer input/question</td></tr>
+                    <tr><td><strong>Model_Response</strong></td><td>The model's generated response</td></tr>
+                    <tr><td><strong>chat_history</strong></td><td>Previous conversation context</td></tr>
+                    <tr><td><strong>neo4j_data</strong></td><td>Knowledge graph data used as context</td></tr>
+                    <tr><td><strong>Hallucination (PASS/BLOCK)</strong></td><td>Manual hallucination label</td></tr>
+                    <tr><td><strong>Comments</strong></td><td>Reviewer comments and notes</td></tr>
                 </tbody>
             </table>
 
-            <h3 class="subsection-title">A.2 Abbreviations</h3>
+            <h3 class="subsection-title">A.2 Output Column Definitions</h3>
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th style="width: 100px;">Term</th>
-                        <th>Definition</th>
+                        <th style="width: 200px;">Column Name</th>
+                        <th>Description</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr><td><strong>TP</strong></td><td>True Positive - Correctly predicted positive class</td></tr>
-                    <tr><td><strong>TN</strong></td><td>True Negative - Correctly predicted negative class</td></tr>
-                    <tr><td><strong>FP</strong></td><td>False Positive - Incorrectly predicted positive class</td></tr>
-                    <tr><td><strong>FN</strong></td><td>False Negative - Incorrectly predicted negative class</td></tr>
+                    <tr><td><strong>total_success</strong></td><td>Overall evaluation pass (1) or fail (0)</td></tr>
+                    <tr><td><strong>faithfulness_success</strong></td><td>Faithfulness check pass (1) or fail (0)</td></tr>
+                    <tr><td><strong>faithfulness_score</strong></td><td>Capture rate - proportion of facts grounded in context</td></tr>
+                    <tr><td><strong>faithfulness_reason</strong></td><td>List of supported and unsupported facts</td></tr>
+                    <tr><td><strong>custom_hallucination_success</strong></td><td>Custom hallucination check pass (1) or fail (0)</td></tr>
+                    <tr><td><strong>custom_hallucination_score</strong></td><td>Hallucination confidence score (0-1)</td></tr>
+                    <tr><td><strong>custom_hallucination_reason</strong></td><td>Explanation for hallucination detection</td></tr>
                 </tbody>
             </table>
         </section>"""
@@ -710,14 +790,9 @@ class ReportHTMLGenerator:
         return f"""
         <div class="document-footer">
             <div class="footer-content">
-                <div class="footer-notice">
-                    <strong>Confidentiality Notice:</strong><br>
-                    {html.escape(self.gen.report_metadata.confidentiality_notice)}
-                </div>
                 <div class="footer-meta">
-                    <div>Document ID: {html.escape(self.gen.report_metadata.document_id)}</div>
+                    <div>Run Id: {html.escape(self.gen.report_metadata.document_id)}</div>
                     <div>Generated: {self.gen.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}</div>
-                    <div>Page <span class="page-number"></span></div>
                 </div>
             </div>
         </div>"""
@@ -737,10 +812,13 @@ class ReportHTMLGenerator:
         }
 
         function filterSampleRows(metricName, filter, button) {
-            // Update button states
+            // Update button states (only for type filter buttons, not split)
             const container = document.getElementById('samples-' + metricName);
-            container.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            container.querySelectorAll('.filter-btn:not(.split-filter)').forEach(btn => btn.classList.remove('active'));
             button.classList.add('active');
+
+            // Reset split filter buttons
+            container.querySelectorAll('.filter-btn.split-filter').forEach(btn => btn.classList.remove('active'));
 
             // Filter table rows
             const table = document.getElementById('sample-table-' + metricName);
@@ -758,6 +836,26 @@ class ReportHTMLGenerator:
                     } else if (filter === 'false_positive') {
                         row.classList.toggle('hidden', status !== 'false_positive');
                     }
+                });
+            }
+        }
+
+        function filterSampleRowsBySplit(metricName, split, button) {
+            // Update split button states
+            const container = document.getElementById('samples-' + metricName);
+            container.querySelectorAll('.filter-btn.split-filter').forEach(btn => btn.classList.remove('active'));
+            button.classList.add('active');
+
+            // Reset type filter buttons and set "All" as active
+            container.querySelectorAll('.filter-btn:not(.split-filter)').forEach(btn => btn.classList.remove('active'));
+            container.querySelector('.filter-btn:not(.split-filter)').classList.add('active');
+
+            // Filter table rows by split
+            const table = document.getElementById('sample-table-' + metricName);
+            if (table) {
+                table.querySelectorAll('.sample-row').forEach(row => {
+                    const rowSplit = row.dataset.split;
+                    row.classList.toggle('hidden', rowSplit !== split);
                 });
             }
         }
